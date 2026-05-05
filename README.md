@@ -32,7 +32,7 @@ A multimodal video analysis and semantic search platform powered by Qwen2.5-Omni
 - **Python 3.9+**
 - **Node.js 18+**
 - **Docker & Docker Compose** (for Elasticsearch + Kibana)
-- **GPU recommended**: Apple Silicon (MPS) or CUDA for model inference
+- **GPU**: Apple Silicon (MPS) for model inference
 - **RAM**: 16 GB minimum (32 GB recommended for larger videos)
 
 ## Installation

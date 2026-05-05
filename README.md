@@ -188,7 +188,3 @@ video_search_app/
 - Ensure video file is not corrupted
 - Try shorter videos first (< 2 minutes recommended)
 - Check B2 credentials if upload fails
-
-## License
-
-MIT

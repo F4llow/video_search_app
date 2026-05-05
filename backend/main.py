@@ -8,6 +8,7 @@ from fastapi.responses import RedirectResponse
 from fastapi.middleware.cors import CORSMiddleware
 from elasticsearch import Elasticsearch
 from dotenv import load_dotenv
+from sentence_transformers import SentenceTransformer
 
 import model
 from s3_client import upload_video_to_b2, get_presigned_url
@@ -56,8 +57,11 @@ def worker():
 threading.Thread(target=worker, daemon=True).start()
 
 # Load model on startup
+embedder = None
 @app.on_event("startup")
 def startup_event():
+    global embedder
+    embedder = SentenceTransformer('all-MiniLM-L6-v2')
     # Load model in a background thread or synchronously
     success, msg = model.load_model()
     if not success:
@@ -128,6 +132,8 @@ def process_video(file_path: str, filename: str, public_url: str):
 
         summary = result["summary"]
         job_results[filename] = summary
+        
+        vector = embedder.encode(summary).tolist()
 
         # Index to Elasticsearch
         try:
@@ -136,20 +142,13 @@ def process_video(file_path: str, filename: str, public_url: str):
                 document={
                     "filename": filename,
                     "video_url": public_url,
-                    "summary": summary
+                    "summary": summary,
+                    "dense_embedding": vector
                 }
             )
         except Exception as es_err:
-            print(f"Warning: ELSER indexing failed ({es_err}). Retrying with pipeline='_none'")
-            es.index(
-                index="videos",
-                pipeline="_none",
-                document={
-                    "filename": filename,
-                    "video_url": public_url,
-                    "summary": summary
-                }
-            )
+            print(f"Warning: Indexing failed ({es_err}).")
+            
         print(f"Successfully processed and indexed: {filename}")
         processing_jobs[filename] = "completed"
     except Exception as e:
@@ -163,7 +162,7 @@ def process_video(file_path: str, filename: str, public_url: str):
             os.remove(file_path)
 
 @app.get("/search")
-async def search_videos(q: str, mode: str = "elser"):
+async def search_videos(q: str, mode: str = "semantic"):
     if not q:
         return {"results": []}
 
@@ -178,15 +177,14 @@ async def search_videos(q: str, mode: str = "elser"):
                 "_source": ["filename", "video_url", "summary"]
             }
         else:
-            # ELSER semantic search
+            # Semantic search using dense_embedding
+            query_vector = embedder.encode(q).tolist()
             body = {
-                "query": {
-                    "text_expansion": {
-                        "summary_embedding": {
-                            "model_id": ".elser_model_2",
-                            "model_text": q
-                        }
-                    }
+                "knn": {
+                    "field": "dense_embedding",
+                    "query_vector": query_vector,
+                    "k": 10,
+                    "num_candidates": 100
                 },
                 "_source": ["filename", "video_url", "summary"]
             }
@@ -204,7 +202,7 @@ async def search_videos(q: str, mode: str = "elser"):
         ]
         return {"results": results}
     except Exception as e:
+        import traceback
+        traceback.print_exc()
         print(f"Search error: {e}")
-        if mode == "elser":
-            raise HTTPException(status_code=503, detail="ELSER_OFFLINE")
         raise HTTPException(status_code=500, detail="Search failed")

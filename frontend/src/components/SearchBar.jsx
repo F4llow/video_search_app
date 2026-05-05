@@ -3,7 +3,7 @@ import { Search } from 'lucide-react';
 
 export default function SearchBar({ onSearch }) {
   const [query, setQuery] = useState('');
-  const [mode, setMode] = useState('elser');
+  const [mode, setMode] = useState('semantic');
 
   const handleSubmit = (e) => {
     e.preventDefault();
@@ -18,7 +18,7 @@ export default function SearchBar({ onSearch }) {
         <input 
           type="text" 
           className="search-input" 
-          placeholder={mode === 'elser' ? "Semantic search through your videos..." : "Keyword search..."} 
+          placeholder={mode === 'semantic' ? "Semantic search through your videos..." : "Keyword search..."} 
           value={query}
           onChange={(e) => setQuery(e.target.value)}
         />
@@ -28,12 +28,12 @@ export default function SearchBar({ onSearch }) {
         <label style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', display: 'flex', alignItems: 'center', cursor: 'pointer' }}>
           <input 
             type="radio" 
-            value="elser" 
-            checked={mode === 'elser'} 
-            onChange={() => setMode('elser')}
+            value="semantic" 
+            checked={mode === 'semantic'} 
+            onChange={() => setMode('semantic')}
             style={{ marginRight: '6px' }}
           />
-          Semantic (ELSER)
+          Semantic
         </label>
         <label style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', display: 'flex', alignItems: 'center', cursor: 'pointer' }}>
           <input 

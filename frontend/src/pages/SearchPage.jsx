@@ -18,11 +18,7 @@ export default function SearchPage() {
       const res = await fetch(`http://localhost:8000/search?q=${encodeURIComponent(query)}&mode=${mode}`);
       const data = await res.json();
       if (!res.ok) {
-        if (res.status === 503 && data.detail === "ELSER_OFFLINE") {
-          setSearchError("❌ ELSER semantic search is currently offline. Please switch to BM25 keyword search.");
-        } else {
-          setSearchError("❌ Search failed. Please try again.");
-        }
+        setSearchError("❌ Search failed. Please try again.");
         return;
       }
       setSearchResults(data.results || []);

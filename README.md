@@ -29,7 +29,7 @@ A multimodal video analysis and semantic search platform powered by Qwen2.5-Omni
 
 ## Prerequisites
 
-- **Python 3.10+**
+- **Python 3.9+**
 - **Node.js 18+**
 - **Docker & Docker Compose** (for Elasticsearch + Kibana)
 - **GPU recommended**: Apple Silicon (MPS) or CUDA for model inference

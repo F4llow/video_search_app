@@ -10,6 +10,7 @@ import gc
 import logging
 import torch
 from pathlib import Path
+from PIL import Image  # Added for image downscaling
 
 logger = logging.getLogger(__name__)
 
@@ -37,6 +38,12 @@ VIDEO_SUMMARY_PROMPT = (
     "**Key Takeaway:** What is the main message, point, or purpose of this video?\n"
     "**Suggested Tags / Keywords:** A comma-separated list of 8-12 relevant search keywords.\n\n"
     "Be specific and descriptive."
+)
+
+# Instruction to help the model use the few-shot example provided in history
+RECOGNITION_INSTRUCTION = (
+    "\n\n**Note:** I have provided an example of Donald Trump above. "
+    "If he appears in this video, please identify him by name."
 )
 
 
@@ -240,9 +247,20 @@ def _patch_torchvision_io() -> None:
         logger.warning(f"Could not install torchvision.io.read_video shim: {e}")
 
 
+def _get_downscaled_image(image_path: str, max_dim: int = 512) -> Image.Image:
+    """Opens and resizes an image to save memory during inference."""
+    img = Image.open(image_path).convert("RGB")
+    ratio = max_dim / max(img.size)
+    if ratio < 1.0:
+        new_size = (int(img.size[0] * ratio), int(img.size[1] * ratio))
+        img = img.resize(new_size, Image.Resampling.LANCZOS)
+    return img
+
+
 def summarize_video(video_path: str) -> dict:
     """
     Analyze a local .mp4 file with Qwen2.5-Omni-7B and return a summary.
+    Now includes a few-shot example for Donald Trump recognition.
 
     Args:
         video_path: Absolute path to the .mp4 file.
@@ -260,8 +278,7 @@ def summarize_video(video_path: str) -> dict:
     if not Path(video_path).exists():
         return {"success": False, "summary": None, "error": f"File not found: {video_path}"}
 
-    # Patch torchvision.io before qwen_omni_utils is imported — the utils
-    # module calls read_video at import time when processing a video.
+    # Patch torchvision.io before qwen_omni_utils is imported
     _patch_torchvision_io()
 
     try:
@@ -270,44 +287,61 @@ def summarize_video(video_path: str) -> dict:
         return {
             "success": False,
             "summary": None,
-            "error": (
-                f"qwen-omni-utils not installed: {e}. "
-                "Run: pip install qwen-omni-utils"
-            ),
+            "error": f"qwen-omni-utils not installed: {e}.",
         }
+
+    # --- FEW-SHOT PREPARATION ---
+    trump_img_path = "trump.jpg"
+    trump_shot_exists = Path(trump_img_path).exists()
+    
+    if trump_shot_exists:
+        logger.info(f"Loading and downscaling few-shot anchor: {trump_img_path}")
+        trump_image = _get_downscaled_image(trump_img_path)
+    else:
+        logger.warning("trump.jpg not found. Proceeding without few-shot recognition.")
 
     logger.info(f"Starting inference on: {video_path}")
 
-    # Build the conversation with the video file path.
-    # qwen-omni-utils handles frame extraction + audio extraction with
-    # TMRoPE-aligned timestamps internally — we pass the raw .mp4 path.
+    # Build the conversation with the "shot" followed by the video.
     conversation = [
         {
             "role": "system",
             "content": [{"type": "text", "text": SYSTEM_PROMPT}],
-        },
-        {
-            "role": "user",
-            "content": [
-                {
-                    "type": "video", 
-                    "video": video_path,
-                    # ── Memory optimizations for 16 GB Mac ──
-                    # Limit to 8 frames total to prevent attention matrix explosion
-                    "max_frames": 8,
-                    # Limit pixels per frame to 128 tokens (128 * 14 * 14 * 4) 
-                    "max_pixels": 100352 
-                },
-                {"type": "text", "text": VIDEO_SUMMARY_PROMPT},
-            ],
-        },
+        }
     ]
 
+    # Inject the Trump example if available
+    if trump_shot_exists:
+        conversation.extend([
+            {
+                "role": "user",
+                "content": [
+                    {"type": "image", "image": trump_image},
+                    {"type": "text", "text": "Who is this?"}
+                ],
+            },
+            {
+                "role": "assistant",
+                "content": [{"type": "text", "text": "This is Donald Trump."}],
+            }
+        ])
+
+    # Final task with the video
+    conversation.append({
+        "role": "user",
+        "content": [
+            {
+                "type": "video", 
+                "video": video_path,
+                # Kept at 8 frames per user request
+                "max_frames": 8,
+                "max_pixels": 100352 
+            },
+            {"type": "text", "text": VIDEO_SUMMARY_PROMPT + (RECOGNITION_INSTRUCTION if trump_shot_exists else "")},
+        ],
+    })
+
     try:
-        # process_mm_info handles TMRoPE-aligned extraction of:
-        # - video frames (with absolute timestamps)
-        # - audio waveform (with matching absolute timestamps)
-        # use_audio_in_video=True is key — it processes audio + video together
         USE_AUDIO_IN_VIDEO = True
 
         logger.info("Extracting and processing multimodal content from video...")
@@ -327,8 +361,7 @@ def summarize_video(video_path: str) -> dict:
             padding=True,
             use_audio_in_video=USE_AUDIO_IN_VIDEO,
         )
-        # Move inputs to the model's device; only cast float tensors to model dtype.
-        # Casting integer tensors (input_ids, attention_mask) to float16 would break them.
+
         device = _model.device
         inputs = {
             k: (v.to(device).to(_model.dtype) if v.dtype.is_floating_point else v.to(device))
@@ -337,7 +370,6 @@ def summarize_video(video_path: str) -> dict:
 
         logger.info("Running model inference (this may take a few minutes on 16 GB RAM)...")
         with torch.no_grad():
-            # return_audio=False because we called model.disable_talker()
             text_ids = _model.generate(
                 **inputs,
                 use_audio_in_video=USE_AUDIO_IN_VIDEO,
@@ -345,7 +377,6 @@ def summarize_video(video_path: str) -> dict:
                 max_new_tokens=1024,
             )
 
-        # Decode only the newly generated tokens (not the input prompt)
         generated_ids = text_ids[:, inputs["input_ids"].shape[1]:]
         summary = _processor.batch_decode(
             generated_ids,
@@ -369,8 +400,7 @@ def summarize_video(video_path: str) -> dict:
         if "out of memory" in str(e).lower():
             msg = (
                 "Out of memory during inference. Your Mac has 16 GB of unified memory, "
-                "which is below the recommended 32 GB for this model. "
-                "Try closing other applications and uploading a shorter video."
+                "which is below the recommended 32 GB for this model."
             )
             gc.collect()
         else:
@@ -382,7 +412,6 @@ def summarize_video(video_path: str) -> dict:
         logger.error(msg, exc_info=True)
         return {"success": False, "summary": None, "error": msg}
     finally:
-        # Clean up input tensors from device memory
         if "inputs" in dir():
             del inputs
         gc.collect()

@@ -59,7 +59,6 @@ Backend requires in `.env`:
 Qwen2.5-Omni-7B (`Qwen/Qwen2.5-Omni-7B`):
 - Loaded with 4-bit quantization (QuantoConfig `int4`)
 - Text-only output (Talker disabled)
-- Video: max 8 frames, max_pixels=100352
 - Patches `torchvision.io.read_video` via PyAV (removed in torchvision >= 0.21)
 
 SentenceTransformer: `all-MiniLM-L6-v2` for 384-dim dense embeddings
